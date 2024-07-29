@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -163,18 +161,9 @@ func (c *InMemoryCache) SaveFile() (*string, error) {
 		return nil, fmt.Errorf("error creating file: %v", err)
 	}
 
-	defer func(file *os.File) *errors.CustomError {
-		if closeFileErr := file.Close(); closeFileErr != nil {
-			return errors.NewCustomError(
-				closeFileErr,
-				"Error Close File",
-				"Error SaveFile Function: Error Close File",
-				strconv.Itoa(http.StatusInternalServerError),
-			)
-		}
-
-		return nil
-	}(file)
+	defer func() {
+		file.Close()
+	}()
 
 	w := bufio.NewWriter(file)
 
@@ -200,12 +189,7 @@ func (c *InMemoryCache) SaveFile() (*string, error) {
 	wg.Wait()
 
 	if err = w.Flush(); err != nil {
-		return nil, errors.NewCustomError(
-			err,
-			"Flash To Function Error",
-			fmt.Sprintf("Error loadFile Function: Flash To Function Error: %s", err.Error()),
-			strconv.Itoa(http.StatusInternalServerError),
-		)
+		return nil, fmt.Errorf("error writing file: %v", err)
 	}
 
 	return &fileName, nil
@@ -243,8 +227,8 @@ func (c *InMemoryCache) savingDataToFile(
 	}
 }
 
-func (c *InMemoryCache) FileDataToCache(nameLoadFile string) *errors.CustomError {
-	errCn := make(chan *errors.CustomError)
+func (c *InMemoryCache) FileDataToCache(nameLoadFile string) error {
+	errCn := make(chan error)
 
 	var wg sync.WaitGroup
 
@@ -270,15 +254,10 @@ func (c *InMemoryCache) FileDataToCache(nameLoadFile string) *errors.CustomError
 	}
 }
 
-func (c *InMemoryCache) loadFile(nameLoadFile string) *errors.CustomError {
+func (c *InMemoryCache) loadFile(nameLoadFile string) error {
 	file, openFileErr := os.Open(nameLoadFile)
 	if openFileErr != nil {
-		return errors.NewCustomError(
-			openFileErr,
-			fmt.Sprintf("Error Open File With Name: %s", nameLoadFile),
-			fmt.Sprintf("Error loadFile Function: Error Open File With Name: %s", nameLoadFile),
-			strconv.Itoa(http.StatusBadRequest),
-		)
+		return fmt.Errorf("error open file with name: %s", nameLoadFile)
 	}
 
 	scanner := bufio.NewScanner(file)
@@ -289,7 +268,7 @@ func (c *InMemoryCache) loadFile(nameLoadFile string) *errors.CustomError {
 		line := scanner.Text()
 		data, err := extractDataFromLine(line)
 		if err != nil {
-			return err.ChangeDevMessage(fmt.Sprintf("Error On loadFile: %s. ", nameLoadFile))
+			return fmt.Errorf("error on LoadFile: %s. ", nameLoadFile)
 		}
 
 		backupItems = append(backupItems, data)
@@ -316,19 +295,13 @@ func (c *InMemoryCache) loadFile(nameLoadFile string) *errors.CustomError {
 	return nil
 }
 
-func extractDataFromLine(line string) (CacheBackupItem, *errors.CustomError) {
+func extractDataFromLine(line string) (CacheBackupItem, error) {
 	var data CacheBackupItem
 
 	re := regexp.MustCompile(`Key: (.*?), Value: (.*?), Created: (.*?), Expiration: (.*?)}`)
 	matches := re.FindStringSubmatch(line)
 	if len(matches) != 5 {
-		return data, errors.NewCustomErrorWithLevelLogging(
-			nil,
-			"Error Reading Line From File",
-			fmt.Sprintf("Error Reading Line From File. Place Of Error: %s", line),
-			strconv.Itoa(http.StatusInternalServerError),
-			errors.Error,
-		)
+		return data, fmt.Errorf("error reading line from file")
 	}
 
 	data.Key = strings.TrimSpace(matches[1])
