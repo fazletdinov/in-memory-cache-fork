@@ -12,18 +12,18 @@ const (
 
 const TimeLayout = "02.01.2006_15-04-05"
 
-type InMemoryCache struct {
+type InMemoryCache[K comparable, V any] struct {
 	sync.RWMutex
 	defaultExpiration time.Duration
 	cleanupInterval   time.Duration
-	items             map[string]CacheItem
+	items             map[K]CacheItem[K, V]
 }
 
-type CacheItem struct {
-	Key        string      `json:"Key"`
-	Value      interface{} `json:"Value"`
-	Created    time.Time   `json:"Created"`
-	Expiration int64       `json:"Expiration"`
+type CacheItem[K comparable, V any] struct {
+	Key        K         `json:"Key"`
+	Value      V         `json:"Value"`
+	Created    time.Time `json:"Created"`
+	Expiration int64     `json:"Expiration"`
 }
 
 type CacheSize struct {
@@ -31,9 +31,9 @@ type CacheSize struct {
 	Weight uintptr
 }
 
-type CacheBackupItem struct {
-	Key        string
-	Value      interface{}
+type CacheBackupItem[K comparable, V any] struct {
+	Key        K
+	Value      V
 	Created    string
 	Expiration string
 }

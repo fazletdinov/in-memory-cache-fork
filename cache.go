@@ -1,22 +1,19 @@
 package inmemorycache
 
 import (
-	"bufio"
-	"context"
 	"fmt"
-	"os"
-	"regexp"
-	"strings"
 	"sync"
 	"time"
 	"unsafe"
 )
 
-func New(defaultExpiration, cleanupInterval, cronSavingDataToCacheDelay time.Duration) *InMemoryCache {
+func New[K comparable, V any](
+	defaultExpiration, cleanupInterval time.Duration,
+) *InMemoryCache[K, V] {
 
-	items := make(map[string]CacheItem)
+	items := make(map[K]CacheItem[K, V])
 
-	cache := InMemoryCache{
+	cache := &InMemoryCache[K, V]{
 		RWMutex:           sync.RWMutex{},
 		defaultExpiration: defaultExpiration,
 		cleanupInterval:   cleanupInterval,
@@ -27,14 +24,10 @@ func New(defaultExpiration, cleanupInterval, cronSavingDataToCacheDelay time.Dur
 		go cache.gC()
 	}
 
-	if cronSavingDataToCacheDelay > 0 {
-		go cache.cronSavingDataToFile(cronSavingDataToCacheDelay)
-	}
-
-	return &cache
+	return cache
 }
 
-func (c *InMemoryCache) Set(key string, value interface{}, duration time.Duration) {
+func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) {
 	var expiration int64
 
 	if duration > 0 {
@@ -53,7 +46,7 @@ func (c *InMemoryCache) Set(key string, value interface{}, duration time.Duratio
 
 	defer c.Unlock()
 
-	c.items[key] = CacheItem{
+	c.items[key] = CacheItem[K, V]{
 		Key:        key,
 		Value:      value,
 		Created:    time.Now(),
@@ -61,7 +54,7 @@ func (c *InMemoryCache) Set(key string, value interface{}, duration time.Duratio
 	}
 }
 
-func (c *InMemoryCache) Get(key string) (*CacheItem, error) {
+func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], error) {
 	c.RLock()
 
 	defer c.RUnlock()
@@ -78,14 +71,14 @@ func (c *InMemoryCache) Get(key string) (*CacheItem, error) {
 		}
 	}
 
-	return &CacheItem{
+	return &CacheItem[K, V]{
 		Value:      item.Value,
 		Created:    item.Created,
 		Expiration: item.Expiration,
 	}, nil
 }
 
-func (c *InMemoryCache) Delete(key string) error {
+func (c *InMemoryCache[K, V]) Delete(key K) error {
 	c.Lock()
 
 	defer c.Unlock()
@@ -99,18 +92,17 @@ func (c *InMemoryCache) Delete(key string) error {
 	return nil
 }
 
-func (c *InMemoryCache) RenameKey(key string, newKey string) error {
+func (c *InMemoryCache[K, V]) RenameKey(key K, newKey K) error {
 	c.Lock()
 
 	defer c.Unlock()
 
-	// TODO  On the One Hand, Verification Is Not Needed Because It Is Done in the Delete Function
 	item, err := c.Get(key)
 	if err != nil {
 		return err
 	}
 
-	if err = c.Delete(key); err != nil {
+	if errDeleteItem := c.Delete(key); errDeleteItem != nil {
 		return err
 	}
 
@@ -119,7 +111,7 @@ func (c *InMemoryCache) RenameKey(key string, newKey string) error {
 	return nil
 }
 
-func (c *InMemoryCache) CacheSize() CacheSize {
+func (c *InMemoryCache[K, V]) CacheSize() CacheSize {
 	c.Lock()
 
 	defer c.Unlock()
@@ -133,194 +125,11 @@ func (c *InMemoryCache) CacheSize() CacheSize {
 	}
 }
 
-// When Copying An Item, You Can Refer To It By ${Key}Copy
-// Example:
-// Original Key: exampleCacheItem
-// Accessing The Copy After Calling The Function: exampleCacheItemCopy
-func (c *InMemoryCache) CopyItem(key string) error {
-	item, err := c.Get(key)
-	if err != nil {
-		return err
-	}
-
-	c.Set(fmt.Sprintf("%sCopy", key), item.Value, time.Duration(item.Expiration-item.Created.UnixNano()))
-
-	return nil
+func (c *InMemoryCache[K, V]) FlashAll() {
+	c.items = make(map[K]CacheItem[K, V])
 }
 
-func (c *InMemoryCache) FlashAll() {
-	c.items = make(map[string]CacheItem)
-}
-
-func (c *InMemoryCache) SaveFile() (*string, error) {
-
-	fileName := fmt.Sprintf("cacheBackup_%s", time.Now().Format(TimeLayout))
-
-	file, err := os.Create(fileName)
-	if err != nil {
-		return nil, fmt.Errorf("error creating file: %v", err)
-	}
-
-	defer func() {
-		file.Close()
-	}()
-
-	w := bufio.NewWriter(file)
-
-	itemChanel := make(chan CacheBackupItem, c.CacheSize().Len)
-	defer close(itemChanel)
-
-	var wg sync.WaitGroup
-
-	go c.savingDataToFile(context.Background(), &wg, itemChanel, w)
-
-	for _, item := range c.items {
-
-		wg.Add(1)
-
-		itemChanel <- CacheBackupItem{
-			Key:        item.Key,
-			Value:      item.Value,
-			Created:    item.Created.Format(TimeLayout),
-			Expiration: time.Duration(item.Expiration - item.Created.UnixNano()).String(),
-		}
-	}
-
-	wg.Wait()
-
-	if err = w.Flush(); err != nil {
-		return nil, fmt.Errorf("error writing file: %v", err)
-	}
-
-	return &fileName, nil
-}
-
-func (c *InMemoryCache) savingDataToFile(
-	ctx context.Context,
-	wg *sync.WaitGroup,
-	itemStream <-chan CacheBackupItem,
-	w *bufio.Writer,
-) {
-	for {
-		select {
-		case item, ok := <-itemStream:
-			if !ok {
-				return
-			}
-
-			if _, err := w.Write(
-				[]byte(
-					fmt.Sprintf(
-						"{ Key: %s, Value: %s, Created: %s, Expiration: %s }\r\n",
-						item.Key,
-						item.Value,
-						item.Created,
-						item.Expiration,
-					),
-				),
-			); err != nil {
-				return
-			}
-
-			wg.Done()
-		}
-	}
-}
-
-func (c *InMemoryCache) FileDataToCache(nameLoadFile string) error {
-	errCn := make(chan error)
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-
-	go func() {
-
-		defer wg.Done()
-
-		err := c.loadFile(nameLoadFile)
-		if err != nil {
-			errCn <- err
-		}
-	}()
-
-	wg.Wait()
-
-	select {
-	case err := <-errCn:
-		return err
-	default:
-		return nil
-	}
-}
-
-func (c *InMemoryCache) loadFile(nameLoadFile string) error {
-	file, openFileErr := os.Open(nameLoadFile)
-	if openFileErr != nil {
-		return fmt.Errorf("error open file with name: %s", nameLoadFile)
-	}
-
-	scanner := bufio.NewScanner(file)
-
-	backupItems := []CacheBackupItem{}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		data, err := extractDataFromLine(line)
-		if err != nil {
-			return fmt.Errorf("error on LoadFile: %s. ", nameLoadFile)
-		}
-
-		backupItems = append(backupItems, data)
-	}
-
-	items := []CacheItem{}
-
-	for _, backupItem := range backupItems {
-		created, _ := time.Parse(TimeLayout, backupItem.Created)
-		expiration, _ := time.ParseDuration(backupItem.Expiration)
-
-		items = append(items, CacheItem{
-			Key:        backupItem.Key,
-			Value:      backupItem.Value,
-			Created:    created,
-			Expiration: expiration.Nanoseconds(),
-		})
-	}
-
-	for _, item := range items {
-		c.Set(item.Key, item.Value, time.Duration(item.Expiration))
-	}
-
-	return nil
-}
-
-func extractDataFromLine(line string) (CacheBackupItem, error) {
-	var data CacheBackupItem
-
-	re := regexp.MustCompile(`Key: (.*?), Value: (.*?), Created: (.*?), Expiration: (.*?)}`)
-	matches := re.FindStringSubmatch(line)
-	if len(matches) != 5 {
-		return data, fmt.Errorf("error reading line from file")
-	}
-
-	data.Key = strings.TrimSpace(matches[1])
-	data.Value = strings.TrimSpace(matches[2])
-	data.Created = strings.TrimSpace(matches[3])
-	data.Expiration = strings.TrimSpace(matches[4])
-
-	return data, nil
-}
-
-func (c *InMemoryCache) cronSavingDataToFile(delay time.Duration) {
-	for {
-		<-time.After(delay)
-
-		c.SaveFile()
-	}
-}
-
-func (c *InMemoryCache) gC() {
+func (c *InMemoryCache[K, V]) gC() {
 	for {
 		<-time.After(c.cleanupInterval)
 
@@ -334,7 +143,7 @@ func (c *InMemoryCache) gC() {
 	}
 }
 
-func (c *InMemoryCache) expiredKeys() (keys []string) {
+func (c *InMemoryCache[K, V]) expiredKeys() (keys []K) {
 
 	c.RLock()
 
@@ -349,7 +158,7 @@ func (c *InMemoryCache) expiredKeys() (keys []string) {
 	return
 }
 
-func (c *InMemoryCache) clearItems(keys []string) {
+func (c *InMemoryCache[K, V]) clearItems(keys []K) {
 
 	c.Lock()
 
