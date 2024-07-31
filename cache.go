@@ -54,7 +54,7 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) {
 	}
 }
 
-func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], error) {
+func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], bool) {
 	c.RLock()
 
 	defer c.RUnlock()
@@ -62,12 +62,12 @@ func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], error) {
 	item, found := c.items[key]
 
 	if !found {
-		return nil, fmt.Errorf("item with key %s does not exist", key)
+		return nil, found
 	}
 
 	if item.Expiration > 0 {
 		if time.Now().UnixNano() > item.Expiration {
-			return nil, fmt.Errorf("the item has expired. key: %s", key)
+			return nil, false
 		}
 	}
 
@@ -75,7 +75,7 @@ func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], error) {
 		Value:      item.Value,
 		Created:    item.Created,
 		Expiration: item.Expiration,
-	}, nil
+	}, true
 }
 
 func (c *InMemoryCache[K, V]) Delete(key K) error {
@@ -83,8 +83,8 @@ func (c *InMemoryCache[K, V]) Delete(key K) error {
 
 	defer c.Unlock()
 
-	if _, err := c.Get(key); err != nil {
-		return err
+	if _, found := c.Get(key); found {
+		return fmt.Errorf("item with key %v not exists", key)
 	}
 
 	delete(c.items, key)
@@ -97,13 +97,13 @@ func (c *InMemoryCache[K, V]) RenameKey(key K, newKey K) error {
 
 	defer c.Unlock()
 
-	item, err := c.Get(key)
-	if err != nil {
-		return err
+	item, found := c.Get(key)
+	if !found {
+		return fmt.Errorf("item with key %v not exists", key)
 	}
 
 	if errDeleteItem := c.Delete(key); errDeleteItem != nil {
-		return err
+		return errDeleteItem
 	}
 
 	c.Set(newKey, item.Value, time.Duration(item.Expiration-item.Created.UnixNano()))
