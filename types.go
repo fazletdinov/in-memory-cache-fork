@@ -21,6 +21,7 @@ type InMemoryCache[K comparable, V any] struct {
 	haveLimitMaximumCapacity bool
 	capacity                 int64
 	linkedList               *list.List
+	existingVolume           uint32
 }
 
 type CacheItem[K comparable, V any] struct {

@@ -8,9 +8,7 @@ import (
 	"unsafe"
 )
 
-const percentagePermanentlyFreeMemoryFromSpecifiedValue int64 = 88
-
-var existingVolume uint32 = 0
+const percentagePermanentlyFreeMemoryFromSpecifiedValue int32 = 88
 
 func New[K comparable, V any](
 	defaultExpiration,
@@ -33,6 +31,7 @@ func New[K comparable, V any](
 		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
 		capacity:                 capacity,
 		linkedList:               list.New(),
+		existingVolume:           0,
 	}
 
 	if cleanupInterval > 0 {
@@ -201,10 +200,10 @@ func (c *InMemoryCache[K, V]) clearItems(keys []K) {
 
 func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
 	currentSize := uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
-	existingVolume += currentSize
+	c.existingVolume += currentSize
 
-	if int64((float64(existingVolume)+float64(currentSize))/float64(existingVolume)*100) > int64(percentagePermanentlyFreeMemoryFromSpecifiedValue) {
-		existingVolume -= currentSize
+	if int32(float32(c.existingVolume)/float32(c.capacity)*100) > percentagePermanentlyFreeMemoryFromSpecifiedValue {
+		c.existingVolume -= currentSize
 		return false
 	}
 	return true
