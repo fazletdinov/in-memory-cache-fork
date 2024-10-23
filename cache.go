@@ -213,6 +213,6 @@ func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
 	for i := 0; i < c.linkedList.Len()/2; i++ {
 		item := c.linkedList.Back()
 		c.linkedList.Remove(item)
-		delete(c.items, item.Value.(K))
+		c.Delete(item.Value.(K))
 	}
 }
