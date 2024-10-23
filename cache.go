@@ -207,8 +207,7 @@ func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
 		existingVolume -= currentSize
 		return false
 	}
-	percent := int64(float64(existingVolume) / float64(c.capacity) * 100)
-	return percent > percentagePermanentlyFreeMemoryFromSpecifiedValue
+	return true
 }
 
 func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
