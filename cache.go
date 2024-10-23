@@ -59,7 +59,7 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 
 	if c.haveLimitMaximumCapacity {
 		if c.checkCapacity(key, value) {
-			c.deleteDueToOverflow(c.linkedList)
+			c.deleteDueToOverflow()
 			return false
 		}
 	}
@@ -203,9 +203,13 @@ func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
 	return percent > percentagePermanentlyFreeMemoryFromSpecifiedValue
 }
 
-func (c *InMemoryCache[K, V]) deleteDueToOverflow(list *list.List) {
+func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
+	c.Lock()
+
+	defer c.Unlock()
+
 	for i := 0; i < c.linkedList.Len()/2; i++ {
-		item := list.Back()
+		item := c.linkedList.Back()
 		c.linkedList.Remove(item)
 		delete(c.items, item.Value.(K))
 	}
