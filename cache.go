@@ -1,34 +1,38 @@
 package inmemorycache
 
 import (
+	"container/list"
 	"fmt"
 	"sync"
 	"time"
 	"unsafe"
 )
 
-const limitPercent = 12
+const percentagePermanentlyFreeMemoryFromSpecifiedValue int = 88
+
+var existingVolume uint32 = 0
 
 func New[K comparable, V any](
 	defaultExpiration,
 	cleanupInterval time.Duration,
-	turnCapacity bool,
-	capacity int,
+	haveLimitMaximumCapacity bool,
+	capacity int64,
 ) *InMemoryCache[K, V] {
 	var items map[K]CacheItem[K, V]
 
-	if turnCapacity {
+	if haveLimitMaximumCapacity {
 		items = make(map[K]CacheItem[K, V], capacity)
 	} else {
 		items = make(map[K]CacheItem[K, V])
 	}
 	cache := &InMemoryCache[K, V]{
-		RWMutex:           sync.RWMutex{},
-		defaultExpiration: defaultExpiration,
-		cleanupInterval:   cleanupInterval,
-		items:             items,
-		turnCapacity:      turnCapacity,
-		capacity:          capacity,
+		RWMutex:                  sync.RWMutex{},
+		defaultExpiration:        defaultExpiration,
+		cleanupInterval:          cleanupInterval,
+		items:                    items,
+		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
+		capacity:                 capacity,
+		linkedList:               list.New(),
 	}
 
 	if cleanupInterval > 0 {
@@ -53,9 +57,11 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
 	}
 
-	if c.turnCapacity && c.checkCapacity(c.capacity) {
-		c.deleteDueToOverflow()
-		return false
+	if c.haveLimitMaximumCapacity {
+		if c.checkCapacity(key, value) {
+			c.deleteDueToOverflow(c.linkedList)
+			return false
+		}
 	}
 
 	c.Lock()
@@ -68,6 +74,8 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		Created:    time.Now(),
 		Expiration: expiration,
 	}
+	c.linkedList.PushBack(key)
+
 	return true
 }
 
@@ -176,7 +184,6 @@ func (c *InMemoryCache[K, V]) expiredKeys() (keys []K) {
 }
 
 func (c *InMemoryCache[K, V]) clearItems(keys []K) {
-
 	c.Lock()
 
 	defer c.Unlock()
@@ -186,17 +193,20 @@ func (c *InMemoryCache[K, V]) clearItems(keys []K) {
 	}
 }
 
-func (c *InMemoryCache[K, V]) checkCapacity(capacity int) bool {
-	percent := int(float32(len(c.items)) / (float32(capacity) + 1) * 100)
-	return percent > limitPercent
+func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
+	existingVolume += uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
+
+	if c.capacity-int64(existingVolume) <= 0 {
+		return false
+	}
+	percent := int(float64(existingVolume) / float64(c.capacity) * 100)
+	return percent > percentagePermanentlyFreeMemoryFromSpecifiedValue
 }
 
-func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
-	var count int = 0
-	for key := range c.items {
-		if count%2 == 0 {
-			delete(c.items, key)
-		}
-		count++
+func (c *InMemoryCache[K, V]) deleteDueToOverflow(list *list.List) {
+	for i := 0; i < c.linkedList.Len()/2; i++ {
+		item := list.Back()
+		c.linkedList.Remove(item)
+		delete(c.items, item.Value.(K))
 	}
 }

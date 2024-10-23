@@ -1,6 +1,7 @@
 package inmemorycache
 
 import (
+	"container/list"
 	"sync"
 	"time"
 )
@@ -14,11 +15,12 @@ const TimeLayout = "02.01.2006_15-04-05"
 
 type InMemoryCache[K comparable, V any] struct {
 	sync.RWMutex
-	defaultExpiration time.Duration
-	cleanupInterval   time.Duration
-	items             map[K]CacheItem[K, V]
-	turnCapacity      bool
-	capacity          int
+	defaultExpiration        time.Duration
+	cleanupInterval          time.Duration
+	items                    map[K]CacheItem[K, V]
+	haveLimitMaximumCapacity bool
+	capacity                 int64
+	linkedList               *list.List
 }
 
 type CacheItem[K comparable, V any] struct {
