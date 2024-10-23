@@ -8,7 +8,7 @@ import (
 	"unsafe"
 )
 
-const percentagePermanentlyFreeMemoryFromSpecifiedValue int = 88
+const percentagePermanentlyFreeMemoryFromSpecifiedValue int64 = 88
 
 var existingVolume uint32 = 0
 
@@ -58,7 +58,7 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 	}
 
 	if c.haveLimitMaximumCapacity {
-		if c.checkCapacity(key, value) {
+		if !c.checkCapacity(key, value) {
 			c.deleteDueToOverflow()
 			return false
 		}
@@ -194,12 +194,14 @@ func (c *InMemoryCache[K, V]) clearItems(keys []K) {
 }
 
 func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
-	existingVolume += uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
+	currentSize := uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
+	existingVolume += currentSize
 
-	if c.capacity-int64(existingVolume) <= 0 {
+	if int64((float64(existingVolume)+float64(currentSize))/float64(existingVolume)*100) > int64(percentagePermanentlyFreeMemoryFromSpecifiedValue) {
+		existingVolume -= currentSize
 		return false
 	}
-	percent := int(float64(existingVolume) / float64(c.capacity) * 100)
+	percent := int64(float64(existingVolume) / float64(c.capacity) * 100)
 	return percent > percentagePermanentlyFreeMemoryFromSpecifiedValue
 }
 
