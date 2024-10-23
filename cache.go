@@ -187,8 +187,8 @@ func (c *InMemoryCache[K, V]) clearItems(keys []K) {
 }
 
 func (c *InMemoryCache[K, V]) checkCapacity(capacity int) bool {
-	percent := int(float32(capacity) / (float32(len(c.items)) + 1) * 100)
-	return (percent - 100) > limitPercent
+	percent := int(float32(len(c.items)) / (float32(capacity) + 1) * 100)
+	return percent > limitPercent
 }
 
 func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
