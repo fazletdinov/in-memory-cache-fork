@@ -112,6 +112,12 @@ func (c *InMemoryCache[K, V]) Delete(key K) error {
 		return fmt.Errorf("item with key %v not exists", key)
 	}
 
+	for element := c.linkedList.Front(); element != nil; element = element.Next() {
+		if key == element.Value.(K) {
+			c.linkedList.Remove(element)
+		}
+	}
+
 	delete(c.items, key)
 
 	return nil
