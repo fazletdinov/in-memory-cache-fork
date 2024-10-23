@@ -17,6 +17,8 @@ type InMemoryCache[K comparable, V any] struct {
 	defaultExpiration time.Duration
 	cleanupInterval   time.Duration
 	items             map[K]CacheItem[K, V]
+	turnCapacity      bool
+	capacity          int
 }
 
 type CacheItem[K comparable, V any] struct {

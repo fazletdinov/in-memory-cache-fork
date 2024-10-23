@@ -7,17 +7,28 @@ import (
 	"unsafe"
 )
 
+const limitPercent = 12
+
 func New[K comparable, V any](
-	defaultExpiration, cleanupInterval time.Duration,
+	defaultExpiration,
+	cleanupInterval time.Duration,
+	turnCapacity bool,
+	capacity int,
 ) *InMemoryCache[K, V] {
+	var items map[K]CacheItem[K, V]
 
-	items := make(map[K]CacheItem[K, V])
-
+	if turnCapacity {
+		items = make(map[K]CacheItem[K, V], capacity)
+	} else {
+		items = make(map[K]CacheItem[K, V])
+	}
 	cache := &InMemoryCache[K, V]{
 		RWMutex:           sync.RWMutex{},
 		defaultExpiration: defaultExpiration,
 		cleanupInterval:   cleanupInterval,
 		items:             items,
+		turnCapacity:      turnCapacity,
+		capacity:          capacity,
 	}
 
 	if cleanupInterval > 0 {
@@ -27,7 +38,7 @@ func New[K comparable, V any](
 	return cache
 }
 
-func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) {
+func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 	var expiration int64
 
 	if duration > 0 {
@@ -42,6 +53,11 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) {
 		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
 	}
 
+	if c.turnCapacity && c.checkCapacity(c.capacity) {
+		c.deleteDueToOverflow()
+		return false
+	}
+
 	c.Lock()
 
 	defer c.Unlock()
@@ -52,6 +68,7 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) {
 		Created:    time.Now(),
 		Expiration: expiration,
 	}
+	return true
 }
 
 func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], bool) {
@@ -166,5 +183,20 @@ func (c *InMemoryCache[K, V]) clearItems(keys []K) {
 
 	for _, k := range keys {
 		delete(c.items, k)
+	}
+}
+
+func (c *InMemoryCache[K, V]) checkCapacity(capacity int) bool {
+	percent := int(float32(capacity) / (float32(len(c.items)) + 1) * 100)
+	return (percent - 100) > limitPercent
+}
+
+func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
+	var count int = 0
+	for key := range c.items {
+		if count%2 == 0 {
+			delete(c.items, key)
+		}
+		count++
 	}
 }
