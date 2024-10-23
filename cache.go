@@ -56,11 +56,9 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
 	}
 
-	if c.haveLimitMaximumCapacity {
-		if !c.checkCapacity(key, value) {
-			c.deleteDueToOverflow()
-			return false
-		}
+	if c.haveLimitMaximumCapacity && !c.checkCapacity(key, value) {
+		c.deleteDueToOverflow()
+		return false
 	}
 
 	c.Lock()
