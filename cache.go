@@ -1,8 +1,8 @@
 package inmemorycache
 
 import (
-	"container/list"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 	"unsafe"
@@ -30,7 +30,7 @@ func New[K comparable, V any](
 		items:                    items,
 		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
 		capacity:                 capacity,
-		linkedList:               list.New(),
+		arrayCache:               make([]CacheForArray[K], 0, capacity),
 		existingVolume:           0,
 	}
 
@@ -71,7 +71,11 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		Created:    time.Now(),
 		Expiration: expiration,
 	}
-	c.linkedList.PushBack(key)
+
+	c.arrayCache = append(c.arrayCache, CacheForArray[K]{
+		Key:        key,
+		Expiration: expiration,
+	})
 
 	return true
 }
@@ -109,9 +113,9 @@ func (c *InMemoryCache[K, V]) Delete(key K) error {
 		return fmt.Errorf("item with key %v not exists", key)
 	}
 
-	for element := c.linkedList.Front(); element != nil; element = element.Next() {
-		if key == element.Value.(K) {
-			c.linkedList.Remove(element)
+	for index, value := range c.arrayCache {
+		if key == value.Key {
+			c.arrayCache = append(c.arrayCache[:index], c.arrayCache[index+1:]...)
 		}
 	}
 
@@ -208,13 +212,19 @@ func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
 }
 
 func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
-	c.Lock()
+	c.sliceSorting()
 
+	c.Lock()
 	defer c.Unlock()
 
-	for i := 0; i < c.linkedList.Len()/2; i++ {
-		item := c.linkedList.Back()
-		c.linkedList.Remove(item)
-		c.Delete(item.Value.(K))
+	for index := 0; index < len(c.arrayCache)/2; index++ {
+		c.arrayCache = append(c.arrayCache[:index], c.arrayCache[index+1:]...)
+		c.Delete(c.arrayCache[index].Key)
 	}
+}
+
+func (c *InMemoryCache[K, V]) sliceSorting() {
+	sort.Slice(c.arrayCache, func(i, j int) bool {
+		return c.arrayCache[i].Expiration > c.arrayCache[j].Expiration
+	})
 }

@@ -1,7 +1,6 @@
 package inmemorycache
 
 import (
-	"container/list"
 	"sync"
 	"time"
 )
@@ -20,7 +19,7 @@ type InMemoryCache[K comparable, V any] struct {
 	items                    map[K]CacheItem[K, V]
 	haveLimitMaximumCapacity bool
 	capacity                 int64
-	linkedList               *list.List
+	arrayCache               []CacheForArray[K]
 	existingVolume           uint32
 }
 
@@ -41,4 +40,9 @@ type CacheBackupItem[K comparable, V any] struct {
 	Value      V
 	Created    string
 	Expiration string
+}
+
+type CacheForArray[K comparable] struct {
+	Key        K
+	Expiration int64
 }
