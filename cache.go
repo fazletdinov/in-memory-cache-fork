@@ -105,11 +105,11 @@ func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], bool) {
 }
 
 func (c *InMemoryCache[K, V]) Delete(key K) error {
-	c.Lock()
+	c.RLock()
 
-	defer c.Unlock()
+	defer c.RUnlock()
 
-	if _, found := c.Get(key); found {
+	if _, found := c.Get(key); !found {
 		return fmt.Errorf("item with key %v not exists", key)
 	}
 
@@ -125,10 +125,6 @@ func (c *InMemoryCache[K, V]) Delete(key K) error {
 }
 
 func (c *InMemoryCache[K, V]) RenameKey(key K, newKey K) error {
-	c.Lock()
-
-	defer c.Unlock()
-
 	item, found := c.Get(key)
 	if !found {
 		return fmt.Errorf("item with key %v not exists", key)
@@ -214,8 +210,8 @@ func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
 func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
 	c.sliceSorting()
 
-	c.Lock()
-	defer c.Unlock()
+	c.RLock()
+	defer c.RUnlock()
 
 	for index := 0; index < len(c.arrayCache)/2; index++ {
 		c.arrayCache = append(c.arrayCache[:index], c.arrayCache[index+1:]...)
@@ -225,6 +221,6 @@ func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
 
 func (c *InMemoryCache[K, V]) sliceSorting() {
 	sort.Slice(c.arrayCache, func(i, j int) bool {
-		return c.arrayCache[i].Expiration > c.arrayCache[j].Expiration
+		return c.arrayCache[i].Expiration < c.arrayCache[j].Expiration
 	})
 }
