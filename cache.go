@@ -30,8 +30,6 @@ func New[K comparable, V any](
 		items:                    items,
 		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
 		capacity:                 capacity,
-		arrayCache:               make([]CacheForArray[K], 0, capacity),
-		existingVolume:           0,
 	}
 
 	if cleanupInterval > 0 {
@@ -56,7 +54,7 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
 	}
 
-	if c.haveLimitMaximumCapacity && !c.checkCapacity(key, value) {
+	if c.haveLimitMaximumCapacity && c.checkCapacity(key, value) {
 		c.deleteDueToOverflow()
 		return false
 	}
@@ -71,11 +69,6 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		Created:    time.Now(),
 		Expiration: expiration,
 	}
-
-	c.arrayCache = append(c.arrayCache, CacheForArray[K]{
-		Key:        key,
-		Expiration: expiration,
-	})
 
 	return true
 }
@@ -111,12 +104,6 @@ func (c *InMemoryCache[K, V]) Delete(key K) error {
 
 	if _, found := c.Get(key); !found {
 		return fmt.Errorf("item with key %v not exists", key)
-	}
-
-	for index, value := range c.arrayCache {
-		if key == value.Key {
-			c.arrayCache = append(c.arrayCache[:index], c.arrayCache[index+1:]...)
-		}
 	}
 
 	delete(c.items, key)
@@ -197,30 +184,50 @@ func (c *InMemoryCache[K, V]) clearItems(keys []K) {
 }
 
 func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
-	currentSize := uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
-	c.existingVolume += currentSize
-
-	if int32(float32(c.existingVolume)/float32(c.capacity)*100) > percentagePermanentlyFreeMemoryFromSpecifiedValue {
-		c.existingVolume -= currentSize
-		return false
-	}
-	return true
+	keyValueSize := uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
+	currentSize := c.memSize()
+	return int32(keyValueSize+currentSize/uint32(c.capacity)*100) > percentagePermanentlyFreeMemoryFromSpecifiedValue
 }
 
 func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
-	c.sliceSorting()
-
 	c.RLock()
 	defer c.RUnlock()
 
-	for index := 0; index < len(c.arrayCache)/2; index++ {
-		c.arrayCache = append(c.arrayCache[:index], c.arrayCache[index+1:]...)
-		c.Delete(c.arrayCache[index].Key)
-	}
+	c.sliceSorting()
 }
 
 func (c *InMemoryCache[K, V]) sliceSorting() {
-	sort.Slice(c.arrayCache, func(i, j int) bool {
-		return c.arrayCache[i].Expiration < c.arrayCache[j].Expiration
+	var sortedArray []*CacheForArray[K, V]
+
+	for key, value := range c.items {
+		sortedArray = append(sortedArray, &CacheForArray[K, V]{
+			Key:   key,
+			Value: value,
+		})
+	}
+
+	// сортировка списка по полю Expiration
+	sort.Slice(sortedArray, func(i, j int) bool {
+		return sortedArray[i].Value.Expiration > sortedArray[j].Value.Expiration
 	})
+
+	// создание новой отсортированной map
+	sortedMap := make(map[K]CacheItem[K, V])
+	for i, pair := range sortedArray {
+		sortedMap[pair.Key] = pair.Value
+		// удаление 50% элементов по возрастанию
+		if i >= len(sortedArray)/2 {
+			delete(sortedMap, pair.Key)
+		}
+	}
+	c.items = sortedMap
+}
+
+func (c *InMemoryCache[K, V]) memSize() uint32 {
+	var size uint32 = 0
+	for key, value := range c.items {
+		size += uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
+	}
+	return size
+
 }

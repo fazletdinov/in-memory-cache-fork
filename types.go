@@ -19,8 +19,6 @@ type InMemoryCache[K comparable, V any] struct {
 	items                    map[K]CacheItem[K, V]
 	haveLimitMaximumCapacity bool
 	capacity                 int64
-	arrayCache               []CacheForArray[K]
-	existingVolume           uint32
 }
 
 type CacheItem[K comparable, V any] struct {
@@ -42,7 +40,7 @@ type CacheBackupItem[K comparable, V any] struct {
 	Expiration string
 }
 
-type CacheForArray[K comparable] struct {
-	Key        K
-	Expiration int64
+type CacheForArray[K comparable, V any] struct {
+	Key   K
+	Value CacheItem[K, V]
 }

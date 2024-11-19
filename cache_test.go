@@ -2,7 +2,6 @@ package inmemorycache
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -65,8 +64,6 @@ func TestNew(t *testing.T) {
 		items:                    make(map[string]CacheItem[string, int], capacity),
 		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
 		capacity:                 int64(capacity),
-		arrayCache:               make([]CacheForArray[string], 0, capacity),
-		existingVolume:           0,
 	}
 
 	cache := New[string, CacheItem[string, int]](
@@ -78,11 +75,8 @@ func TestNew(t *testing.T) {
 
 	assert.Equal(t, cached.defaultExpiration, cache.defaultExpiration)
 	assert.Equal(t, cached.cleanupInterval, cache.cleanupInterval)
-	assert.Equal(t, cached.existingVolume, cache.existingVolume)
 	assert.Equal(t, cached.haveLimitMaximumCapacity, cache.haveLimitMaximumCapacity)
 	assert.Equal(t, cached.capacity, cache.capacity)
-	assert.Equal(t, cached.arrayCache, cache.arrayCache)
-	assert.Equal(t, cached.arrayCache, cache.arrayCache)
 
 	assert.NotEqual(t, cached.items, cache.items)
 
@@ -90,6 +84,7 @@ func TestNew(t *testing.T) {
 
 func TestSet(t *testing.T) {
 	cache := SetUp()
+	cache.capacity = 300
 
 	testcases := []struct {
 		key      string
@@ -97,13 +92,27 @@ func TestSet(t *testing.T) {
 		duration time.Duration
 		expected bool
 	}{
-		{"A", map[string]string{"Not Found": "Не найдено"}, time.Minute * 3, true},
-		{"B", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 4, true},
-		{"C", map[string]string{"Not Found": "Табылмады"}, time.Minute * 5, true},
-		{"D", map[string]string{"Not Found": "Не найдено"}, time.Minute * 6, true},
-		{"E", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 7, true},
-		{"F", map[string]string{"Not Found": "Табылмады"}, time.Minute * 8, true},
-		{"G", map[string]string{"Not Found": "Не найдено"}, time.Minute * 9, true},
+		{"Python", map[string]string{"Not Found": "Не найдено"}, time.Minute * 600, true},
+		{"Golang", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 550, true},
+		{"Rust", map[string]string{"Not Found": "Табылмады"}, time.Minute * 500, true},
+		{"C++", map[string]string{"Not Found": "Не найдено"}, time.Minute * 450, true},
+		{"PHP", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 400, true},
+		{"JS", map[string]string{"Not Found": "Табылмады"}, time.Minute * 380, true},
+		{"Java", map[string]string{"Not Found": "Не найдено"}, time.Minute * 360, true},
+		{"Haskel", map[string]string{"Not Found": "Не найдено"}, time.Minute * 330, true},
+		{"Django", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 300, true},
+		{"FastApi", map[string]string{"Not Found": "Табылмады"}, time.Minute * 280, true},
+		{"Flask", map[string]string{"Not Found": "Не найдено"}, time.Minute * 260, true},
+		{"Gin", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 230, true},
+		{"Fiber", map[string]string{"Not Found": "Табылмады"}, time.Minute * 210, true},
+		{"Laravel", map[string]string{"Not Found": "Не найдено"}, time.Minute * 190, true},
+		{"Docker", map[string]string{"Not Found": "Не найдено"}, time.Minute * 170, true},
+		{"Git", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 140, true},
+		{"Asyncio", map[string]string{"Not Found": "Табылмады"}, time.Minute * 120, true},
+		{"Gorutin", map[string]string{"Not Found": "Не найдено"}, time.Minute * 90, true},
+		{"Kotlin", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 70, true},
+		{"Redis", map[string]string{"Not Found": "Табылмады"}, time.Minute * 45, true},
+		{"Kubernetes", map[string]string{"Not Found": "Не найдено"}, time.Minute * 12, true},
 	}
 
 	for _, tc := range testcases {
@@ -185,31 +194,12 @@ func TestDeleteDueToOverflow(t *testing.T) {
 		duration time.Duration
 		expected bool
 	}{
-		{"A", map[string]string{"Not Found": "Не найдено"}, time.Minute * 30, true},
-		{"B", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 4, true},
-		{"C", map[string]string{"Not Found": "Табылмады"}, time.Minute * 5, true},
-		{"D", map[string]string{"Not Found": "Не найдено"}, time.Minute * 6, true},
-		{"E", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 7, true},
-		{"F", map[string]string{"Not Found": "Табылмады"}, time.Minute * 8, true},
-		{"G", map[string]string{"Not Found": "Не найдено"}, time.Minute * 9, true},
-		{"H", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 10, true},
-		{"I", map[string]string{"Not Found": "Табылмады"}, time.Minute * 110, true},
-		{"K", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 12, true},
-		{"L", map[string]string{"Not Found": "Табылмады"}, time.Minute * 13, true},
-		{"M", map[string]string{"Not Found": "Не найдено"}, time.Minute * 14, true},
-		{"N", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 15, true},
-		{"O", map[string]string{"Not Found": "Не найдено"}, time.Minute * 16, true},
-		{"P", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 17, true},
-		{"Q", map[string]string{"Not Found": "Табылмады"}, time.Minute * 18, true},
-		{"R", map[string]string{"Not Found": "Не найдено"}, time.Minute * 19, true},
-		{"S", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 20, true},
-		{"T", map[string]string{"Not Found": "Табылмады"}, time.Minute * 21, true},
-		{"Y", map[string]string{"Not Found": "Не найдено"}, time.Minute * 22, true},
-		{"v", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 123, true},
-		{"W", map[string]string{"Not Found": "Табылмады"}, time.Minute * 24, true},
-		{"X", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 25, true},
-		{"u", map[string]string{"Not Found": "Табылмады"}, time.Minute * 26, true},
-		{"Z", map[string]string{"Not Found": "Не найдено"}, time.Minute * 27, true},
+		{"Python", map[string]string{"Not Found": "Не найдено"}, time.Minute * 300, true},
+		{"Golang", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 250, true},
+		{"Rust", map[string]string{"Not Found": "Табылмады"}, time.Minute * 200, true},
+		{"C++", map[string]string{"Not Found": "Не найдено"}, time.Minute * 150, true},
+		{"Haskel", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 100, true},
+		{"PHP", map[string]string{"Not Found": "Табылмады"}, time.Minute * 70, true},
 	}
 
 	for _, tc := range testcases {
@@ -219,20 +209,16 @@ func TestDeleteDueToOverflow(t *testing.T) {
 		})
 	}
 
-	oldLenArrayCache := len(cache.arrayCache)
 	oldLenItems := len(cache.items)
+	t.Logf("oldLenItems == %#v\n", cache.items)
 
 	t.Run("deleteDueToOverflow", func(t *testing.T) {
 		cache.deleteDueToOverflow()
-		assert.Equal(t, sort.SliceIsSorted(cache.arrayCache, func(i, j int) bool {
-			return cache.arrayCache[i].Expiration < cache.arrayCache[j].Expiration
-		}), true)
 	})
 
-	currentLenArrayCache := len(cache.arrayCache)
 	currentLenItems := len(cache.items)
+	t.Logf("currentLenItems == %#v\n", cache.items)
 
-	assert.NotEqual(t, oldLenArrayCache, currentLenArrayCache)
 	assert.NotEqual(t, oldLenItems, currentLenItems)
 
 }
