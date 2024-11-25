@@ -92,27 +92,27 @@ func TestSet(t *testing.T) {
 		duration time.Duration
 		expected bool
 	}{
-		{"Python", map[string]string{"Not Found": "Не найдено"}, time.Minute * 600, true},
-		{"Golang", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 550, true},
-		{"Rust", map[string]string{"Not Found": "Табылмады"}, time.Minute * 500, true},
-		{"C++", map[string]string{"Not Found": "Не найдено"}, time.Minute * 450, true},
-		{"PHP", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 400, true},
-		{"JS", map[string]string{"Not Found": "Табылмады"}, time.Minute * 380, true},
-		{"Java", map[string]string{"Not Found": "Не найдено"}, time.Minute * 360, true},
-		{"Haskel", map[string]string{"Not Found": "Не найдено"}, time.Minute * 330, true},
-		{"Django", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 300, true},
-		{"FastApi", map[string]string{"Not Found": "Табылмады"}, time.Minute * 280, true},
-		{"Flask", map[string]string{"Not Found": "Не найдено"}, time.Minute * 260, true},
+		{"Python", map[string]string{"Not Found": "Не найдено"}, time.Minute * 6, true},
+		{"Golang", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 25, true},
+		{"Rust", map[string]string{"Not Found": "Табылмады"}, time.Minute * 45, true},
+		{"C++", map[string]string{"Not Found": "Не найдено"}, time.Minute * 55, true},
+		{"PHP", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 75, true},
+		{"JS", map[string]string{"Not Found": "Табылмады"}, time.Minute * 89, false},
+		{"Java", map[string]string{"Not Found": "Не найдено"}, time.Minute * 110, true},
+		{"Haskel", map[string]string{"Not Found": "Не найдено"}, time.Minute * 130, true},
+		{"Django", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 150, true},
+		{"FastApi", map[string]string{"Not Found": "Табылмады"}, time.Minute * 170, false},
+		{"Flask", map[string]string{"Not Found": "Не найдено"}, time.Minute * 190, true},
 		{"Gin", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 230, true},
-		{"Fiber", map[string]string{"Not Found": "Табылмады"}, time.Minute * 210, true},
-		{"Laravel", map[string]string{"Not Found": "Не найдено"}, time.Minute * 190, true},
-		{"Docker", map[string]string{"Not Found": "Не найдено"}, time.Minute * 170, true},
-		{"Git", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 140, true},
-		{"Asyncio", map[string]string{"Not Found": "Табылмады"}, time.Minute * 120, true},
-		{"Gorutin", map[string]string{"Not Found": "Не найдено"}, time.Minute * 90, true},
-		{"Kotlin", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 70, true},
-		{"Redis", map[string]string{"Not Found": "Табылмады"}, time.Minute * 45, true},
-		{"Kubernetes", map[string]string{"Not Found": "Не найдено"}, time.Minute * 12, true},
+		{"Fiber", map[string]string{"Not Found": "Табылмады"}, time.Minute * 240, true},
+		{"Laravel", map[string]string{"Not Found": "Не найдено"}, time.Minute * 290, false},
+		{"Docker", map[string]string{"Not Found": "Не найдено"}, time.Minute * 300, true},
+		{"Git", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 320, true},
+		{"Asyncio", map[string]string{"Not Found": "Табылмады"}, time.Minute * 340, true},
+		{"Gorutin", map[string]string{"Not Found": "Не найдено"}, time.Minute * 360, false},
+		{"Kotlin", map[string]string{"Not Found": "Не знойдзена"}, time.Minute * 370, true},
+		{"Redis", map[string]string{"Not Found": "Табылмады"}, time.Minute * 390, true},
+		{"Kubernetes", map[string]string{"Not Found": "Не найдено"}, time.Minute * 430, true},
 	}
 
 	for _, tc := range testcases {
@@ -149,7 +149,7 @@ func TestCacheSize(t *testing.T) {
 
 }
 
-func TestFlahAll(t *testing.T) {
+func TestFlashAll(t *testing.T) {
 	cache := SetUp()
 	_ = SetUPCreateCache(cache, t)
 
