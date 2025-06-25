@@ -9,6 +9,8 @@ import (
 	"unsafe"
 )
 
+const maxRecursionDepth = 32
+
 // New создает и возвращает новый экземпляр in-memory кэша.
 //
 // Параметры:
@@ -57,36 +59,50 @@ func (c *InMemoryCache[K, V]) calculateItemSize(key K, value V) uint64 {
 	return uint64(unsafe.Sizeof(key)) + c.calculateValueSize(value)
 }
 
-// calculateValueSize рекурсивно вычисляет размер значения
 func (c *InMemoryCache[K, V]) calculateValueSize(value interface{}) uint64 {
+	return c.calculateValueSizeWithDepth(value, 0)
+}
+
+// calculateValueSize рекурсивно вычисляет размер значения
+func (c *InMemoryCache[K, V]) calculateValueSizeWithDepth(value interface{}, depth int) uint64 {
+	// Защита от циклических ссылок
+	if depth > maxRecursionDepth {
+		return 0
+	}
+
 	v := reflect.ValueOf(value)
 	switch v.Kind() {
 	case reflect.String:
 		return uint64(v.Len())
+
 	case reflect.Slice, reflect.Array:
 		size := uint64(0)
 		for i := 0; i < v.Len(); i++ {
-			size += c.calculateValueSize(v.Index(i).Interface())
+			size += c.calculateValueSizeWithDepth(v.Index(i).Interface(), depth+1)
 		}
 		return size + uint64(v.Cap())*uint64(v.Type().Elem().Size())
+
 	case reflect.Map:
 		size := uint64(0)
 		for _, key := range v.MapKeys() {
-			size += c.calculateValueSize(key.Interface()) +
-				c.calculateValueSize(v.MapIndex(key).Interface())
+			size += c.calculateValueSizeWithDepth(key.Interface(), depth+1) +
+				c.calculateValueSizeWithDepth(v.MapIndex(key).Interface(), depth+1)
 		}
 		return size
+
 	case reflect.Struct:
 		size := uint64(0)
 		for i := 0; i < v.NumField(); i++ {
-			size += c.calculateValueSize(v.Field(i).Interface())
+			size += c.calculateValueSizeWithDepth(v.Field(i).Interface(), depth+1)
 		}
 		return size
+
 	case reflect.Ptr:
 		if v.IsNil() {
 			return 0
 		}
-		return c.calculateValueSize(v.Elem().Interface())
+		return c.calculateValueSizeWithDepth(v.Elem().Interface(), depth+1)
+
 	default:
 		return uint64(v.Type().Size())
 	}
