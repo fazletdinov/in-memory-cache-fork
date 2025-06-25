@@ -206,7 +206,7 @@ func TestCacheSize(t *testing.T) {
 }
 
 // TestFlushAll проверяет полную очистку кэша
-func TestFlushAll(t *testing.T) {
+func TestFlashAll(t *testing.T) {
 	cache := New[string, string](
 		context.Background(),
 		time.Minute,
@@ -219,7 +219,7 @@ func TestFlushAll(t *testing.T) {
 	cache.Set("k2", "v2", time.Minute)
 	assert.Equal(t, 2, len(cache.items))
 
-	cache.FlushAll()
+	cache.FlashAll()
 	assert.Equal(t, 0, len(cache.items))
 }
 

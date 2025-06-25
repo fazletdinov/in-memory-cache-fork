@@ -66,7 +66,7 @@ const (
 //	}
 //
 // Примечание:
-//   - Вы можете завершить работу GC вызовом StopGC() вручную или через отмену переданного контекста.
+//   - Вы можете завершить работу GC через отмену переданного контекста.
 //   - Элементы с установленным TTL автоматически удаляются по расписанию или при вызове clearExpired().
 func New[K comparable, V any](
 	ctx context.Context,
@@ -164,7 +164,7 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		Created:    time.Now(),
 		Expiration: expiration,
 	}
-	c.currentSize += itemSize
+	c.adjustCurrentSize(int64(itemSize))
 
 	return true
 }
@@ -208,7 +208,7 @@ func (c *InMemoryCache[K, V]) makeSpaceFor(requiredSize uint64) bool {
 		item := sorted[i]
 		itemSize := c.calculateItemSize(item.Key, item.Value.Value)
 		delete(c.items, item.Key)
-		c.currentSize -= itemSize
+		c.adjustCurrentSize(-int64(itemSize))
 	}
 
 	return c.currentSize+requiredSize <= thresholdSize
@@ -241,7 +241,7 @@ func (c *InMemoryCache[K, V]) Delete(key K) error {
 
 	itemSize := c.calculateItemSize(key, item.Value)
 	delete(c.items, key)
-	c.currentSize -= itemSize
+	c.adjustCurrentSize(-int64(itemSize))
 
 	return nil
 }
@@ -273,7 +273,8 @@ func (c *InMemoryCache[K, V]) RenameKey(oldKey K, newKey K) error {
 	delete(c.items, oldKey)
 	item.Key = newKey
 	c.items[newKey] = item
-	c.currentSize = c.currentSize - itemSize + newItemSize
+	delta := int64(newItemSize) - int64(itemSize)
+	c.adjustCurrentSize(delta)
 
 	return nil
 }
@@ -288,7 +289,7 @@ func (c *InMemoryCache[K, V]) CacheSize() CacheSize {
 	}
 }
 
-func (c *InMemoryCache[K, V]) FlushAll() {
+func (c *InMemoryCache[K, V]) FlashAll() {
 	c.Lock()
 	defer c.Unlock()
 
@@ -320,7 +321,16 @@ func (c *InMemoryCache[K, V]) clearExpired() {
 		if item.Expiration > 0 && now > item.Expiration {
 			itemSize := c.calculateItemSize(k, item.Value)
 			delete(c.items, k)
-			c.currentSize -= itemSize
+			c.adjustCurrentSize(-int64(itemSize))
 		}
+	}
+}
+
+func (c *InMemoryCache[K, V]) adjustCurrentSize(delta int64) {
+	newSize := int64(c.currentSize) + delta
+	if newSize < 0 {
+		c.currentSize = 0
+	} else {
+		c.currentSize = uint64(newSize)
 	}
 }
