@@ -1,7 +1,6 @@
 package inmemorycache
 
 import (
-	"context"
 	"sync"
 	"time"
 )
@@ -22,7 +21,6 @@ type InMemoryCache[K comparable, V any] struct {
 	haveLimitMaximumCapacity bool
 	capacity                 uint64
 	currentSize              uint64
-	cancelGC                 context.CancelFunc
 }
 
 type CacheItem[K comparable, V any] struct {

@@ -9,7 +9,9 @@ import (
 	"unsafe"
 )
 
-const maxRecursionDepth = 32
+const (
+	maxRecursionDepth = 32
+)
 
 // New создает и возвращает новый экземпляр in-memory кэша.
 //
@@ -34,21 +36,18 @@ func New[K comparable, V any](
 	haveLimitMaximumCapacity bool,
 	capacity uint64,
 ) *InMemoryCache[K, V] {
-	// Создаем дочерний контекст для управления сборщиком мусора
-	ctxGC, cancel := context.WithCancel(ctx)
-
 	cache := &InMemoryCache[K, V]{
 		defaultExpiration:        defaultExpiration,
 		cleanupInterval:          cleanupInterval,
 		items:                    make(map[K]CacheItem[K, V], capacity),
 		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
 		capacity:                 capacity,
-		cancelGC:                 cancel, // Функция для остановки GC
 	}
 
 	// Запускаем сборщик мусора, если указан интервал очистки
 	if cleanupInterval > 0 {
-		go cache.gC(ctxGC) // Запуск в отдельной горутине
+		go cache.gC(ctx)
+
 	}
 
 	return cache
@@ -262,12 +261,6 @@ func (c *InMemoryCache[K, V]) FlushAll() {
 
 	c.items = make(map[K]CacheItem[K, V])
 	c.currentSize = 0
-}
-
-func (c *InMemoryCache[K, V]) StopGC() {
-	if c.cancelGC != nil {
-		c.cancelGC()
-	}
 }
 
 func (c *InMemoryCache[K, V]) gC(ctx context.Context) {
