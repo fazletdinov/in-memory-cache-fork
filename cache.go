@@ -40,7 +40,7 @@ func New[K comparable, V any](
 	cache := &InMemoryCache[K, V]{
 		defaultExpiration:        defaultExpiration,
 		cleanupInterval:          cleanupInterval,
-		items:                    make(map[K]CacheItem[K, V]),
+		items:                    make(map[K]CacheItem[K, V], capacity),
 		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
 		capacity:                 capacity,
 		cancelGC:                 cancel, // Функция для остановки GC
