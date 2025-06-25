@@ -63,9 +63,6 @@ const (
 //		if val, ok := cache.Get("foo"); ok {
 //			fmt.Println("Value:", val.Value)
 //		}
-//
-//		// Остановка GC вручную, если нужно
-//		cache.StopGC()
 //	}
 //
 // Примечание:
