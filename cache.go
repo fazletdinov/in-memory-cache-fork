@@ -86,7 +86,6 @@ func New[K comparable, V any](
 		capacity:                 capacity,
 	}
 
-	// Запускаем сборщик мусора, если указан интервал очистки
 	if cleanupInterval > 0 {
 		go cache.gC(ctx)
 
@@ -189,16 +188,16 @@ func (c *InMemoryCache[K, V]) calculateExpiration(duration time.Duration) int64 
 }
 
 func (c *InMemoryCache[K, V]) makeSpaceFor(requiredSize uint64) bool {
-	if c.currentSize+requiredSize <= uint64(float64(c.capacity)*MaxCapacityThreshold) {
+	thresholdSize := uint64(float64(c.capacity) * MaxCapacityThreshold)
+
+	if c.currentSize+requiredSize <= thresholdSize {
 		return true
 	}
 
-	// Сортируем элементы по времени истечения
 	sorted := make([]*CacheForArray[K, V], 0, len(c.items))
 	for k, v := range c.items {
-		sorted = append(sorted, &CacheForArray[K, V]{k, v})
+		sorted = append(sorted, &CacheForArray[K, V]{Key: k, Value: v})
 	}
-
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].Value.Expiration == sorted[j].Value.Expiration {
 			return sorted[i].Value.Created.Before(sorted[j].Value.Created)
@@ -206,18 +205,16 @@ func (c *InMemoryCache[K, V]) makeSpaceFor(requiredSize uint64) bool {
 		return sorted[i].Value.Expiration < sorted[j].Value.Expiration
 	})
 
-	// Удаляем самые старые элементы, пока не освободим место
-	for _, item := range sorted {
-		if c.currentSize+requiredSize <= uint64(float64(c.capacity)*MaxCapacityThreshold) {
-			break
-		}
-
+	// Удаляем 50% самых старых элементов
+	numToDelete := len(sorted) / 2
+	for i := 0; i < numToDelete; i++ {
+		item := sorted[i]
 		itemSize := c.calculateItemSize(item.Key, item.Value.Value)
 		delete(c.items, item.Key)
 		c.currentSize -= itemSize
 	}
 
-	return c.currentSize+requiredSize <= uint64(float64(c.capacity)*MaxCapacityThreshold)
+	return c.currentSize+requiredSize <= thresholdSize
 }
 
 func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], bool) {
@@ -256,13 +253,11 @@ func (c *InMemoryCache[K, V]) RenameKey(oldKey K, newKey K) error {
 	c.Lock()
 	defer c.Unlock()
 
-	// Проверяем существование старого ключа
 	item, found := c.items[oldKey]
 	if !found {
 		return fmt.Errorf("item with key %v not exists", oldKey)
 	}
 
-	// Проверяем, не существует ли уже новый ключ
 	if _, exists := c.items[newKey]; exists {
 		return fmt.Errorf("key %v already exists", newKey)
 	}
@@ -270,7 +265,6 @@ func (c *InMemoryCache[K, V]) RenameKey(oldKey K, newKey K) error {
 	itemSize := c.calculateItemSize(oldKey, item.Value)
 	newItemSize := c.calculateItemSize(newKey, item.Value)
 
-	// Проверяем capacity, если включено
 	if c.haveLimitMaximumCapacity {
 		if c.currentSize-newItemSize+itemSize > uint64(float64(c.capacity)*MaxCapacityThreshold) {
 			if !c.makeSpaceFor(newItemSize - itemSize) {
