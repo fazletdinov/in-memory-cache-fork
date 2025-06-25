@@ -1,67 +1,109 @@
 package inmemorycache
 
 import (
+	"context"
 	"fmt"
+	"reflect"
 	"sort"
-	"sync"
 	"time"
 	"unsafe"
 )
 
-const percentagePermanentlyFreeMemoryFromSpecifiedValue int32 = 88
-
+// New создает и возвращает новый экземпляр in-memory кэша.
+//
+// Параметры:
+//   - ctx: контекст для управления жизненным циклом кэша (используется для остановки сборщика мусора)
+//   - defaultExpiration: время жизни элементов по умолчанию (0 = без срока жизни)
+//   - cleanupInterval: интервал между запусками сборщика мусора (0 = отключить автоочистку)
+//   - haveLimitMaximumCapacity: включить ли ограничение по памяти
+//   - capacity: максимальный размер кэша в байтах (если haveLimitMaximumCapacity = true)
+//
+// Возвращает:
+//   - *InMemoryCache[K, V]: готовый к использованию кэш
+//
+// Особенности:
+//   - При cleanupInterval > 0 запускается фоновый сборщик мусора
+//   - При отмене переданного контекста сборщик мусора останавливается
+//   - Для типов K требуется comparable, для V - any (любой тип)
 func New[K comparable, V any](
+	ctx context.Context,
 	defaultExpiration,
 	cleanupInterval time.Duration,
 	haveLimitMaximumCapacity bool,
-	capacity int64,
+	capacity uint64,
 ) *InMemoryCache[K, V] {
-	var items map[K]CacheItem[K, V]
+	// Создаем дочерний контекст для управления сборщиком мусора
+	ctxGC, cancel := context.WithCancel(ctx)
 
-	if haveLimitMaximumCapacity {
-		items = make(map[K]CacheItem[K, V], capacity)
-	} else {
-		items = make(map[K]CacheItem[K, V])
-	}
 	cache := &InMemoryCache[K, V]{
-		RWMutex:                  sync.RWMutex{},
 		defaultExpiration:        defaultExpiration,
 		cleanupInterval:          cleanupInterval,
-		items:                    items,
+		items:                    make(map[K]CacheItem[K, V]),
 		haveLimitMaximumCapacity: haveLimitMaximumCapacity,
 		capacity:                 capacity,
+		cancelGC:                 cancel, // Функция для остановки GC
 	}
 
+	// Запускаем сборщик мусора, если указан интервал очистки
 	if cleanupInterval > 0 {
-		go cache.gC()
+		go cache.gC(ctxGC) // Запуск в отдельной горутине
 	}
 
 	return cache
 }
 
+// calculateItemSize вычисляет приблизительный размер элемента в байтах
+func (c *InMemoryCache[K, V]) calculateItemSize(key K, value V) uint64 {
+	return uint64(unsafe.Sizeof(key)) + c.calculateValueSize(value)
+}
+
+// calculateValueSize рекурсивно вычисляет размер значения
+func (c *InMemoryCache[K, V]) calculateValueSize(value interface{}) uint64 {
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.String:
+		return uint64(v.Len())
+	case reflect.Slice, reflect.Array:
+		size := uint64(0)
+		for i := 0; i < v.Len(); i++ {
+			size += c.calculateValueSize(v.Index(i).Interface())
+		}
+		return size + uint64(v.Cap())*uint64(v.Type().Elem().Size())
+	case reflect.Map:
+		size := uint64(0)
+		for _, key := range v.MapKeys() {
+			size += c.calculateValueSize(key.Interface()) +
+				c.calculateValueSize(v.MapIndex(key).Interface())
+		}
+		return size
+	case reflect.Struct:
+		size := uint64(0)
+		for i := 0; i < v.NumField(); i++ {
+			size += c.calculateValueSize(v.Field(i).Interface())
+		}
+		return size
+	case reflect.Ptr:
+		if v.IsNil() {
+			return 0
+		}
+		return c.calculateValueSize(v.Elem().Interface())
+	default:
+		return uint64(v.Type().Size())
+	}
+}
+
 func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
-	var expiration int64
-
-	if duration > 0 {
-		expiration = time.Now().Add(duration).UnixNano()
-	}
-
-	if duration < 0 {
-		expiration = int64(NoExpiration)
-	}
-
-	if duration == DefaultExpiration {
-		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
-	}
-
-	if c.haveLimitMaximumCapacity && c.checkCapacity(key, value) {
-		c.deleteDueToOverflow()
-		return false
-	}
+	expiration := c.calculateExpiration(duration)
+	itemSize := c.calculateItemSize(key, value)
 
 	c.Lock()
-
 	defer c.Unlock()
+
+	if c.haveLimitMaximumCapacity {
+		if !c.makeSpaceFor(itemSize) {
+			return false
+		}
+	}
 
 	c.items[key] = CacheItem[K, V]{
 		Key:        key,
@@ -69,165 +111,174 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 		Created:    time.Now(),
 		Expiration: expiration,
 	}
+	c.currentSize += itemSize
 
 	return true
 }
 
+func (c *InMemoryCache[K, V]) calculateExpiration(duration time.Duration) int64 {
+	if duration == DefaultExpiration {
+		duration = c.defaultExpiration
+	}
+
+	switch {
+	case duration == NoExpiration:
+		return int64(NoExpiration)
+	case duration > 0:
+		return time.Now().Add(duration).UnixNano()
+	default:
+		return int64(NoExpiration)
+	}
+}
+
+func (c *InMemoryCache[K, V]) makeSpaceFor(requiredSize uint64) bool {
+	if c.currentSize+requiredSize <= uint64(float64(c.capacity)*MaxCapacityThreshold) {
+		return true
+	}
+
+	// Сортируем элементы по времени истечения
+	sorted := make([]*CacheForArray[K, V], 0, len(c.items))
+	for k, v := range c.items {
+		sorted = append(sorted, &CacheForArray[K, V]{k, v})
+	}
+
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Value.Expiration == sorted[j].Value.Expiration {
+			return sorted[i].Value.Created.Before(sorted[j].Value.Created)
+		}
+		return sorted[i].Value.Expiration < sorted[j].Value.Expiration
+	})
+
+	// Удаляем самые старые элементы, пока не освободим место
+	for _, item := range sorted {
+		if c.currentSize+requiredSize <= uint64(float64(c.capacity)*MaxCapacityThreshold) {
+			break
+		}
+
+		itemSize := c.calculateItemSize(item.Key, item.Value.Value)
+		delete(c.items, item.Key)
+		c.currentSize -= itemSize
+	}
+
+	return c.currentSize+requiredSize <= uint64(float64(c.capacity)*MaxCapacityThreshold)
+}
+
 func (c *InMemoryCache[K, V]) Get(key K) (*CacheItem[K, V], bool) {
 	c.RLock()
-
 	defer c.RUnlock()
 
 	item, found := c.items[key]
-
 	if !found {
-		return nil, found
+		return nil, false
 	}
 
-	if item.Expiration > 0 {
-		if time.Now().UnixNano() > item.Expiration {
-			return nil, false
-		}
+	if item.Expiration > 0 && time.Now().UnixNano() > item.Expiration {
+		return nil, false
 	}
 
-	return &CacheItem[K, V]{
-		Value:      item.Value,
-		Created:    item.Created,
-		Expiration: item.Expiration,
-	}, true
+	return &item, true
 }
 
 func (c *InMemoryCache[K, V]) Delete(key K) error {
-	c.RLock()
+	c.Lock()
+	defer c.Unlock()
 
-	defer c.RUnlock()
-
-	if _, found := c.Get(key); !found {
+	item, found := c.items[key]
+	if !found {
 		return fmt.Errorf("item with key %v not exists", key)
 	}
 
+	itemSize := c.calculateItemSize(key, item.Value)
 	delete(c.items, key)
+	c.currentSize -= itemSize
 
 	return nil
 }
 
-func (c *InMemoryCache[K, V]) RenameKey(key K, newKey K) error {
-	item, found := c.Get(key)
+func (c *InMemoryCache[K, V]) RenameKey(oldKey K, newKey K) error {
+	c.Lock()
+	defer c.Unlock()
+
+	// Проверяем существование старого ключа
+	item, found := c.items[oldKey]
 	if !found {
-		return fmt.Errorf("item with key %v not exists", key)
+		return fmt.Errorf("item with key %v not exists", oldKey)
 	}
 
-	if errDeleteItem := c.Delete(key); errDeleteItem != nil {
-		return errDeleteItem
+	// Проверяем, не существует ли уже новый ключ
+	if _, exists := c.items[newKey]; exists {
+		return fmt.Errorf("key %v already exists", newKey)
 	}
 
-	c.Set(newKey, item.Value, time.Duration(item.Expiration-item.Created.UnixNano()))
+	itemSize := c.calculateItemSize(oldKey, item.Value)
+	newItemSize := c.calculateItemSize(newKey, item.Value)
+
+	// Проверяем capacity, если включено
+	if c.haveLimitMaximumCapacity {
+		if c.currentSize-newItemSize+itemSize > uint64(float64(c.capacity)*MaxCapacityThreshold) {
+			if !c.makeSpaceFor(newItemSize - itemSize) {
+				return fmt.Errorf("not enough space after rename")
+			}
+		}
+	}
+
+	delete(c.items, oldKey)
+	item.Key = newKey
+	c.items[newKey] = item
+	c.currentSize = c.currentSize - itemSize + newItemSize
 
 	return nil
 }
 
 func (c *InMemoryCache[K, V]) CacheSize() CacheSize {
-	c.Lock()
-
-	defer c.Unlock()
-
-	cacheWeight := unsafe.Sizeof(c.items)
-	cacheLen := len(c.items)
+	c.RLock()
+	defer c.RUnlock()
 
 	return CacheSize{
-		Len:    cacheLen,
-		Weight: cacheWeight,
+		Len:    len(c.items),
+		Weight: c.currentSize,
 	}
 }
 
-func (c *InMemoryCache[K, V]) FlashAll() {
-	c.items = make(map[K]CacheItem[K, V])
-}
-
-func (c *InMemoryCache[K, V]) gC() {
-	for {
-		<-time.After(c.cleanupInterval)
-
-		if c.items == nil {
-			return
-		}
-
-		if keys := c.expiredKeys(); len(keys) != 0 {
-			c.clearItems(keys)
-		}
-	}
-}
-
-func (c *InMemoryCache[K, V]) expiredKeys() (keys []K) {
-
-	c.RLock()
-
-	defer c.RUnlock()
-
-	for k, i := range c.items {
-		if time.Now().UnixNano() > i.Expiration && i.Expiration > 0 {
-			keys = append(keys, k)
-		}
-	}
-
-	return
-}
-
-func (c *InMemoryCache[K, V]) clearItems(keys []K) {
+func (c *InMemoryCache[K, V]) FlushAll() {
 	c.Lock()
-
 	defer c.Unlock()
 
-	for _, k := range keys {
-		delete(c.items, k)
+	c.items = make(map[K]CacheItem[K, V])
+	c.currentSize = 0
+}
+
+func (c *InMemoryCache[K, V]) StopGC() {
+	if c.cancelGC != nil {
+		c.cancelGC()
 	}
 }
 
-func (c *InMemoryCache[K, V]) checkCapacity(key K, value V) bool {
-	keyValueSize := uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
-	currentSize := c.memSize()
-	return int32(keyValueSize+currentSize/uint32(c.capacity)*100) > percentagePermanentlyFreeMemoryFromSpecifiedValue
-}
+func (c *InMemoryCache[K, V]) gC(ctx context.Context) {
+	ticker := time.NewTicker(c.cleanupInterval)
+	defer ticker.Stop()
 
-func (c *InMemoryCache[K, V]) deleteDueToOverflow() {
-	c.RLock()
-	defer c.RUnlock()
-
-	c.sliceSorting()
-}
-
-func (c *InMemoryCache[K, V]) sliceSorting() {
-	var sortedArray []*CacheForArray[K, V]
-
-	for key, value := range c.items {
-		sortedArray = append(sortedArray, &CacheForArray[K, V]{
-			Key:   key,
-			Value: value,
-		})
-	}
-
-	// сортировка списка по полю Expiration
-	sort.Slice(sortedArray, func(i, j int) bool {
-		return sortedArray[i].Value.Expiration > sortedArray[j].Value.Expiration
-	})
-
-	// создание новой отсортированной map
-	sortedMap := make(map[K]CacheItem[K, V])
-	for i, pair := range sortedArray {
-		sortedMap[pair.Key] = pair.Value
-		// удаление 50% элементов по возрастанию
-		if i >= len(sortedArray)/2 {
-			delete(sortedMap, pair.Key)
+	for {
+		select {
+		case <-ticker.C:
+			c.clearExpired()
+		case <-ctx.Done():
+			return
 		}
 	}
-	c.items = sortedMap
 }
 
-func (c *InMemoryCache[K, V]) memSize() uint32 {
-	var size uint32 = 0
-	for key, value := range c.items {
-		size += uint32(unsafe.Sizeof(key)) + uint32(unsafe.Sizeof(value))
-	}
-	return size
+func (c *InMemoryCache[K, V]) clearExpired() {
+	now := time.Now().UnixNano()
 
+	c.Lock()
+	defer c.Unlock()
+
+	for k, item := range c.items {
+		if item.Expiration > 0 && now > item.Expiration {
+			itemSize := c.calculateItemSize(k, item.Value)
+			delete(c.items, k)
+			c.currentSize -= itemSize
+		}
+	}
 }
