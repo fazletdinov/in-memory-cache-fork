@@ -9,10 +9,6 @@ import (
 	"unsafe"
 )
 
-const (
-	maxRecursionDepth = 32
-)
-
 // New создает и возвращает новый экземпляр универсального in-memory кэша с поддержкой TTL, автоматической очистки и контроля памяти.
 //
 // Параметры:
@@ -97,48 +93,73 @@ func (c *InMemoryCache[K, V]) calculateItemSize(key K, value V) uint64 {
 }
 
 func (c *InMemoryCache[K, V]) calculateValueSize(value interface{}) uint64 {
-	return c.calculateValueSizeWithDepth(value, 0)
+	visited := make(map[uintptr]struct{})
+	return c.calculateValueSizeWithUnsafe(reflect.ValueOf(value), visited)
 }
 
 // calculateValueSize рекурсивно вычисляет размер значения
-func (c *InMemoryCache[K, V]) calculateValueSizeWithDepth(value interface{}, depth int) uint64 {
-	// Защита от циклических ссылок
-	if depth > maxRecursionDepth {
+func (c *InMemoryCache[K, V]) calculateValueSizeWithUnsafe(v reflect.Value, visited map[uintptr]struct{}) uint64 {
+	if !v.IsValid() {
 		return 0
 	}
 
-	v := reflect.ValueOf(value)
 	switch v.Kind() {
-	case reflect.String:
-		return uint64(v.Len())
-
-	case reflect.Slice, reflect.Array:
-		size := uint64(0)
-		for i := 0; i < v.Len(); i++ {
-			size += c.calculateValueSizeWithDepth(v.Index(i).Interface(), depth+1)
-		}
-		return size + uint64(v.Cap())*uint64(v.Type().Elem().Size())
-
-	case reflect.Map:
-		size := uint64(0)
-		for _, key := range v.MapKeys() {
-			size += c.calculateValueSizeWithDepth(key.Interface(), depth+1) +
-				c.calculateValueSizeWithDepth(v.MapIndex(key).Interface(), depth+1)
-		}
-		return size
-
-	case reflect.Struct:
-		size := uint64(0)
-		for i := 0; i < v.NumField(); i++ {
-			size += c.calculateValueSizeWithDepth(v.Field(i).Interface(), depth+1)
-		}
-		return size
-
-	case reflect.Ptr:
+	case reflect.Ptr, reflect.Interface:
 		if v.IsNil() {
 			return 0
 		}
-		return c.calculateValueSizeWithDepth(v.Elem().Interface(), depth+1)
+		ptr := v.Pointer()
+		if _, ok := visited[ptr]; ok {
+			return 0
+		}
+		visited[ptr] = struct{}{}
+		return uint64(unsafe.Sizeof(ptr)) + c.calculateValueSizeWithUnsafe(v.Elem(), visited)
+
+	case reflect.String:
+		str := v.String()
+		ptr := unsafe.StringData(str)
+		addr := uintptr(*ptr)
+
+		if _, ok := visited[addr]; ok {
+			return 0
+		}
+		visited[addr] = struct{}{}
+
+		return uint64(len(str)) + uint64(unsafe.Sizeof(str))
+
+	case reflect.Slice:
+		ptr := v.Pointer()
+		if _, ok := visited[ptr]; ok {
+			return 0
+		}
+		visited[ptr] = struct{}{}
+
+		total := uint64(unsafe.Sizeof(v.Interface()))
+		for i := 0; i < v.Len(); i++ {
+			total += c.calculateValueSizeWithUnsafe(v.Index(i), visited)
+		}
+		return total
+
+	case reflect.Map:
+		ptr := v.Pointer()
+		if _, ok := visited[ptr]; ok {
+			return 0
+		}
+		visited[ptr] = struct{}{}
+
+		total := uint64(unsafe.Sizeof(v.Interface()))
+		for _, key := range v.MapKeys() {
+			total += c.calculateValueSizeWithUnsafe(key, visited)
+			total += c.calculateValueSizeWithUnsafe(v.MapIndex(key), visited)
+		}
+		return total
+
+	case reflect.Array:
+		total := uint64(0)
+		for i := 0; i < v.Len(); i++ {
+			total += c.calculateValueSizeWithUnsafe(v.Index(i), visited)
+		}
+		return total
 
 	default:
 		return uint64(v.Type().Size())
