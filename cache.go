@@ -221,9 +221,7 @@ func (c *InMemoryCache[K, V]) makeSpaceFor(requiredSize uint64) bool {
 	numToDelete := len(sorted) / 2
 	for i := 0; i < numToDelete; i++ {
 		item := sorted[i]
-		itemSize := c.calculateItemSize(item.Key, item.Value.Value)
-		delete(c.items, item.Key)
-		c.adjustCurrentSize(-int64(itemSize))
+		c.toChangeDetail(item.Key, item.Value.Value)
 	}
 
 	return c.currentSize+requiredSize <= thresholdSize
@@ -254,9 +252,7 @@ func (c *InMemoryCache[K, V]) Delete(key K) error {
 		return fmt.Errorf("item with key %v not exists", key)
 	}
 
-	itemSize := c.calculateItemSize(key, item.Value)
-	delete(c.items, key)
-	c.adjustCurrentSize(-int64(itemSize))
+	c.toChangeDetail(key, item.Value)
 
 	return nil
 }
@@ -339,9 +335,7 @@ func (c *InMemoryCache[K, V]) clearExpired() {
 
 	for k, item := range c.items {
 		if item.Expiration > 0 && now > item.Expiration {
-			itemSize := c.calculateItemSize(k, item.Value)
-			delete(c.items, k)
-			c.adjustCurrentSize(-int64(itemSize))
+			c.toChangeDetail(k, item.Value)
 		}
 	}
 }
@@ -353,4 +347,10 @@ func (c *InMemoryCache[K, V]) adjustCurrentSize(delta int64) {
 	} else {
 		c.currentSize = uint64(newSize)
 	}
+}
+
+func (c *InMemoryCache[K, V]) toChangeDetail(key K, value V) {
+	itemSize := c.calculateItemSize(key, value)
+	delete(c.items, key)
+	c.adjustCurrentSize(-int64(itemSize))
 }
