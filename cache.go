@@ -173,10 +173,8 @@ func (c *InMemoryCache[K, V]) Set(key K, value V, duration time.Duration) bool {
 	c.Lock()
 	defer c.Unlock()
 
-	if c.haveLimitMaximumCapacity {
-		if !c.makeSpaceFor(itemSize) {
-			return false
-		}
+	if c.haveLimitMaximumCapacity && !c.makeSpaceFor(itemSize) {
+		return false
 	}
 
 	c.items[key] = CacheItem[K, V]{
@@ -195,14 +193,10 @@ func (c *InMemoryCache[K, V]) calculateExpiration(duration time.Duration) int64 
 		duration = c.defaultExpiration
 	}
 
-	switch {
-	case duration == NoExpiration:
-		return int64(NoExpiration)
-	case duration > 0:
+	if duration > 0 {
 		return time.Now().Add(duration).UnixNano()
-	default:
-		return int64(NoExpiration)
 	}
+	return int64(NoExpiration)
 }
 
 func (c *InMemoryCache[K, V]) makeSpaceFor(requiredSize uint64) bool {
@@ -271,6 +265,10 @@ func (c *InMemoryCache[K, V]) RenameKey(oldKey K, newKey K) error {
 	c.Lock()
 	defer c.Unlock()
 
+	if oldKey == newKey {
+		return nil
+	}
+
 	item, found := c.items[oldKey]
 	if !found {
 		return fmt.Errorf("item with key %v not exists", oldKey)
@@ -280,12 +278,14 @@ func (c *InMemoryCache[K, V]) RenameKey(oldKey K, newKey K) error {
 		return fmt.Errorf("key %v already exists", newKey)
 	}
 
-	itemSize := c.calculateItemSize(oldKey, item.Value)
+	oldItemSize := c.calculateItemSize(oldKey, item.Value)
 	newItemSize := c.calculateItemSize(newKey, item.Value)
 
-	if c.haveLimitMaximumCapacity {
-		if c.currentSize-newItemSize+itemSize > uint64(float64(c.capacity)*MaxCapacityThreshold) {
-			if !c.makeSpaceFor(newItemSize - itemSize) {
+	sizeDelta := int64(newItemSize) - int64(oldItemSize)
+	if c.haveLimitMaximumCapacity && sizeDelta > 0 {
+		newTotal := c.currentSize + uint64(sizeDelta)
+		if newTotal > uint64(float64(c.capacity)*MaxCapacityThreshold) {
+			if !c.makeSpaceFor(uint64(sizeDelta)) {
 				return fmt.Errorf("not enough space after rename")
 			}
 		}
@@ -294,8 +294,7 @@ func (c *InMemoryCache[K, V]) RenameKey(oldKey K, newKey K) error {
 	delete(c.items, oldKey)
 	item.Key = newKey
 	c.items[newKey] = item
-	delta := int64(newItemSize) - int64(itemSize)
-	c.adjustCurrentSize(delta)
+	c.adjustCurrentSize(sizeDelta)
 
 	return nil
 }
