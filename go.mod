@@ -1,4 +1,4 @@
-module github.com/akayo16/in-memory-cache
+module github.com/fazletdinov/in-memory-cache-fork
 
 go 1.21.12
 
